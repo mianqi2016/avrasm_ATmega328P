@@ -1,0 +1,55 @@
+asm - ATmega328P -2
+2023-02-13
+
+这一节要实现的效果依然是 Blinking，但方法与上一节不同，这一节引入了“rcall” 指令，作用的对象是“Subroutine”。上一节使用的指令 “rjmp”，这一节仍然有用到，因此有必要作一点比较——“rjmp”（相对跳），跳出去以后，可以回来，也可以不回来，回来就要再用一个“rjmp”；“rcall” 指令需要用 “ret” 指令返回，并且自动启用压栈（push）和出栈（pop）功能，因此在程序一开始的设置中要给栈指针寄存器 “SP” 赋初值 - “RAMEND”。
+
+实测的程序：
+
+  1 .include "m328pdef.inc"
+  2 
+  3 .def pinRegLED = r16
+  4 .def portRegLED = r17
+  5 .def delayCountReg = r18
+  6 .def delayLoopRegLow = r24
+  7 .def delayLoopRegHigh = r25
+  8 
+  9 .equ countValue = 39998
+ 10 
+ 11 .cseg
+ 12 .org 0x00
+ 13         ldi pinRegLED, LOW(RAMEND)
+ 14         OUT SPL, pinRegLED
+ 15         ldi pinRegLED, HIGH(RAMEND)
+ 16         out SPH, pinRegLED
+ 17 
+ 18         clr portRegLED
+ 19         ldi pinRegLED, (1<<PINB5)
+ 20         out DDRB, pinRegLED
+ 21 
+ 22 start:
+ 23         eor portRegLED, pinRegLED
+ 24         out PORTB, portRegLED
+ 25 
+ 26         ldi delayCountReg, 50
+ 27         rcall delay10ms
+ 28 
+ 29         rjmp start
+ 30 
+ 31 delay10ms:
+ 32         ldi delayLoopRegLow, LOW(countValue)
+ 33         ldi delayLoopRegHigh, HIGH(countValue)
+ 34 
+ 35 
+ 36 delayLoop:
+ 37         sbiw delayLoopRegLow, 1
+ 38         brne delayLoop
+ 39 
+ 40         dec delayCountReg
+ 41         brne delay10ms
+ 42 
+ 43         nop
+ 44 
+ 45         ret
+
+
+

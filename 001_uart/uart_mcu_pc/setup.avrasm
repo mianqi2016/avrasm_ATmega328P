@@ -1,0 +1,32 @@
+/*
+ * setup.asm
+ *
+ *  Created: 2/17/2023 4:53:25 PM
+ *   Author: MQ
+ */ 
+
+
+;**************************************************************
+;* subroutine: initUART
+;*
+;* inputs: r17:r16 - baud rate prescale
+;*
+;* enables UART transmission with 8 data, parity disabled, 1 stop bit
+;* at input baudrate
+;*
+;* registers modified: r16
+;**************************************************************
+
+ initUART:
+;The desired baud prescale must be loaded into registers 16 and 17 before calling this subroutine. 
+  .equ baud = 9600    ; baudrate
+  .equ bps = (F_CPU/16/baud) - 1    ; baud prescale
+
+  ldi  r16, LOW(bps)    ; load baud prescale
+  ldi  r17, HIGH(bps)    ; into r17:r16
+
+  sts  UBRR0L, r16    ; load baud prescale
+  sts  UBRR0H, r17    ; to UBRR0
+
+  ldi  r16, (1<<RXEN0)|(1<<TXEN0)    ; enable transmitter
+  sts  UCSR0B, r16    ; and receiver

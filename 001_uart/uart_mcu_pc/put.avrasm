@@ -1,0 +1,85 @@
+/*
+ * UART.asm
+ *
+ *  Created: 2/17/2023 4:47:18 PM
+ *   Author: MQ
+ */ 
+
+ ;**************************************************************
+;*Using this subroutine simply requires loading a character into r16 before calling it.
+;
+;* subroutine: putc
+;*
+;* inputs: r16 - character to transmit
+;*
+;* transmits single ASCII character via UART
+;*
+;* registers modified: r17
+;**************************************************************
+
+putc:  
+  lds  r17, UCSR0A    ; load UCSR0A into r17
+  sbrs r17, UDRE0    ; wait for empty transmit buffer
+  rjmp putc    ; repeat loop
+
+  sts  UDR0, r18    ; transmit character
+
+  ret          ; return from subroutine
+
+
+;**************************************************************
+;* subroutine: puts_SRAM
+;*
+;* inputs: XH:XL - SRAM Memory address of string to transmit
+;*
+;* transmits null terminated string via UART
+;*
+;* registers modified: r17,r18,r26,r27
+;**************************************************************
+
+ldi XL, LOW(charBuffer)    ; initialize X pointer
+ldi XH, HIGH(charBuffer)    ; to SRAM array address
+
+puts_SRAM:
+  ld r18, x+    ; load character from SRAM
+  cpi  r18, 0x0d    ; check if CR
+  breq  puts_SRAM_end    ; branch if null
+puts_SRAM_wait:
+  lds  r17, UCSR0A    ; load UCSR0A into r17
+  sbrs  r17, UDRE0    ; wait for empty transmit buffer
+  rjmp  puts_SRAM_wait    ; repeat loop
+
+  sts  UDR0, r18    ; transmit character
+  rjmp  puts_SRAM    ; repeat loop
+puts_SRAM_end:
+  ld r18, x+
+  sts  UDR0, r18
+  ld r18, x
+  sts  UDR0, r18
+  ret          ; return from subroutine
+
+;**************************************************************
+;* subroutine: puts
+;*
+;* inputs: ZH:ZL - Program Memory address of string to transmit
+;*
+;* transmits null terminated string via UART
+;*
+;* registers modified: r16,r17,r30,r31
+;**************************************************************
+
+puts:  
+  lpm  r16, Z+    ; load character from pmem
+  cpi  r16, $00    ; check if null
+  breq  puts_end    ; branch if null
+
+puts_putc_wait:
+  lds  r17, UCSR0A    ; load UCSR0A into r17
+  sbrs  r17, UDRE0    ; wait for empty transmit buffer
+  rjmp  puts_putc_wait    ; repeat loop
+
+  sts  UDR0, r16    ; transmit character
+  rjmp  puts    ; repeat loop
+
+puts_end:
+  ret          ; return from subroutine

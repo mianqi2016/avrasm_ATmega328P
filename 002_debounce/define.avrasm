@@ -1,0 +1,19 @@
+.nolist
+.include "m328pdef.inc"
+.list
+
+;------ Configuration ------
+.set F_CPU = 16000000
+
+;------ Constants ------
+.equ countOverflow = 5    ; 1s/25=40ms
+
+;------ Registers ------
+;free: R0 .. R14
+;.def rCycle = r14   ;Cycle counter, decrease it to zero
+.def rSreg = r15  ;save and restore SREG register
+.def rTemp = r16  ;Multi purpose register
+.def rTempI = r17  ;Multi purpose register inside interrupts
+.def rCycle = r18   ;Cycle counter for key debouncing, decrease it to zero
+.def rFlag = r19  ;Flag register
+  .equ bitFlag = 0  ;LSB in flag register

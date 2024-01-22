@@ -1,0 +1,140 @@
+asm - ATmega328P -4
+2023-02-14
+
+这一节要实现的效果跟前面的第一和第二节一样，但使用了 Interrupt 方法，用的是 Timer0 的 “overflow interrupt”。同时，为了保持程序的完整和严密，还启用了另外一个 interrupt - RESET。整个程序从结构上来说，由一个主循环（main loop），一个子程序（subroutine）, 两个中断服务子程序（ISR）和一个定义寄存器别名与启用两个中断的部分组成。定时器预分频 1024，以从 0-255 的 30 次溢出为半秒钟的时间延迟（delay），从而产生 1Hz 的 blinking 效果。
+
+实测的程序：
+
+;
+; test_asm_Interrupt_ATmega328p_full.asm
+;
+; Created: 2/14/2023 7:23:23 AM
+; Author : MQ
+;
+
+; The most typical and general program setup for the reset and interrupt vector addresses in Atmel® ATmega328P is:
+; Address  Labels Code    Comments
+; 0x0000  jmp RESET    ; Reset Handler
+; 0x0002  jmp EXT_INT0  ; IRQ0 Handler
+; 0x0004  jmp EXT_INT1  ; IRQ1 Handler
+; 0x0006  jmp PCINT0    ; PCINT0 Handler
+; 0x0008  jmp PCINT1    ; PCINT1 Handler
+; 0x000A  jmp PCINT2    ; PCINT2 Handler
+; 0x000C  jmp WDT      ; Watchdog Timer Handler
+; 0x000E  jmp TIM2_COMPA  ; Timer2 Compare A Handler
+; 0x0010  jmp TIM2_COMPB  ; Timer2 Compare B Handler
+; 0x0012  jmp TIM2_OVF  ; Timer2 Overflow Handler
+; 0x0014  jmp TIM1_CAPT  ; Timer1 Capture Handler
+; 0x0016  jmp TIM1_COMPA  ; Timer1 Compare A Handler
+; 0x0018  jmp TIM1_COMPB  ; Timer1 Compare B Handler
+; 0x001A  jmp TIM1_OVF  ; Timer1 Overflow Handler
+; 0x001C  jmp TIM0_COMPA  ; Timer0 Compare A Handler
+; 0x001E  jmp TIM0_COMPB  ; Timer0 Compare B Handler
+; 0x0020  jmp TIM0_OVF  ; Timer0 Overflow Handler
+; 0x0022  jmp SPI_STC    ; SPI Transfer Complete Handler
+; 0x0024  jmp USART_RXC  ; USART, RX Complete Handler
+; 0x0026  jmp USART_UDRE  ; USART, UDR Empty Handler
+; 0x0028  jmp USART_TXC  ; USART, TX Complete Handler
+; 0x002A  jmp ADC      ; ADC Conversion Complete Handler
+; 0x002C  jmp EE_RDY    ; EEPROM Ready Handler
+; 0x002E  jmp ANA_COMP  ; Analog Comparator Handler
+; 0x0030  jmp TWI      ; 2-wire Serial Interface Handler
+; 0x0032  jmp SPM_RDY    ; Store Program Memory Ready Handler
+
+
+.org 0x0000 rjmp RESET    ; Reset Handler
+.org 0x0002 reti      ; IRQ0 Handler
+.org 0x0004 reti      ; IRQ1 Handler
+.org 0x0006 reti      ; PCINT0 Handler
+.org 0x0008 reti      ; PCINT1 Handler
+.org 0x000A reti      ; PCINT2 Handler
+.org 0x000C reti      ; Watchdog Timer Handler
+.org 0x000E reti      ; Timer2 Compare A Handler
+.org 0x0010 reti      ; Timer2 Compare B Handler
+.org 0x0012 reti      ; Timer2 Overflow Handler
+.org 0x0014 reti      ; Timer1 Capture Handler
+.org 0x0016 reti      ; Timer1 Compare A Handler
+.org 0x0018 reti      ; Timer1 Compare B Handler
+.org 0x001A reti      ; Timer1 Overflow Handler
+.org 0x001C reti      ; Timer0 Compare A Handler
+.org 0x001E reti      ; Timer0 Compare B Handler
+.org 0x0020 rjmp timer0_overflow_handler  ; Timer0 Overflow Handler
+.org 0x0022 reti      ; SPI Transfer Complete Handler
+.org 0x0024 reti      ; USART, RX Complete Handler
+.org 0x0026 reti      ; USART, UDR Empty Handler
+.org 0x0028 reti      ; USART, TX Complete Handler
+.org 0x002A reti      ; ADC Conversion Complete Handler
+.org 0x002C reti      ; EEPROM Ready Handler
+.org 0x002E reti      ; Analog Comparator Handler
+.org 0x0030 reti      ; 2-wire Serial Interface Handler
+.org 0x0032 reti      ; Store Program Memory Ready Handler
+;
+
+RESET:  ldi r16, high(RAMEND); Main program start
+    out SPH, r16 ; Set Stack Pointer to top of RAM
+    ldi r16, low(RAMEND)
+    out SPL, r16
+    sei ; enable global interrupts -- equivalent to "sbi SREG, I"
+    rjmp init
+;
+
+;************************************
+; file saved as: blink.asm
+; for AVR: atmega328p
+; clock frequency: 16MHz (optional)
+;************************************
+
+; Program funcion:---------------------
+; counts off seconds by blinking an LED
+; Arduino UNO built_in LED on D13(PORTB5)
+;--------------------------------------
+
+.nolist
+.include "./m328Pdef.inc"
+.list
+
+;==============
+; Declarations:
+
+.def medium = r16
+.def overflows = r17
+;==============
+
+init: 
+   ldi medium,  0b00000101
+   out TCCR0B, medium    ; set the Clock Selector Bits CS00, CS01, CS02 to 101
+                         ; this puts Timer Counter0, TCNT0 in to FCPU/1024 mode
+                         ; so it ticks at the CPU freq/1024
+   ldi medium, 0b00000001
+   sts TIMSK0, medium    ; set the Timer Overflow Interrupt Enable (TOIE0) bit 
+                         ; of the Timer Interrupt Mask Register (TIMSK0)
+   clr medium
+   out TCNT0, medium     ; initialize the Timer/Counter to 0
+
+   sbi DDRB, 5           ; set PD4 to output
+
+;======================
+; Main body of program begin:
+
+blink:
+   sbi PORTB, 5          ; turn on LED on PD4
+   rcall delay           ; delay will be 1/2 second
+   cbi PORTB, 5          ; turn off LED on PD4
+   rcall delay           ; delay will be 1/2 second
+   rjmp blink            ; loop back to the start
+
+delay:
+   clr overflows         ; set overflows to 0 
+   half_second:
+     cpi overflows, 30   ; compare number of overflows and 30
+   brne half_second      ; branch to back to sec_count if not equal 
+   ret                   ; if 30 overflows have occured return to blink
+
+; Main body of program end.
+;======================
+
+timer0_overflow_handler: 
+   inc overflows         ; add 1 to the overflows variable
+   reti                  ; return from interrup
+
+

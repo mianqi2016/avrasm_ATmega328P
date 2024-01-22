@@ -1,0 +1,47 @@
+  1 .include "m328pdef.inc"
+  2 
+  3 .def pinRegLED = r16
+  4 .def portRegLED = r17
+  5 .def delayCountReg = r18
+  6 .def delayLoopRegLow = r24
+  7 .def delayLoopRegHigh = r25
+  8 
+  9 .equ countValue = 39998
+ 10 
+ 11 .cseg
+ 12 .org 0x00
+ 13         ldi pinRegLED, LOW(RAMEND)
+ 14         OUT SPL, pinRegLED
+ 15         ldi pinRegLED, HIGH(RAMEND)
+ 16         out SPH, pinRegLED
+ 17 
+ 18         clr portRegLED
+ 19         ldi pinRegLED, (1<<PINB5)
+ 20         out DDRB, pinRegLED
+ 21 
+ 22 start:
+ 23         eor portRegLED, pinRegLED
+ 24         out PORTB, portRegLED
+ 25 
+ 26         ldi delayCountReg, 50
+ 27         rcall delay10ms
+ 28 
+ 29         rjmp start
+ 30 
+ 31 delay10ms:
+ 32         ldi delayLoopRegLow, LOW(countValue)
+ 33         ldi delayLoopRegHigh, HIGH(countValue)
+ 34 
+ 35 
+ 36 delayLoop:
+ 37         sbiw delayLoopRegLow, 1
+ 38         brne delayLoop
+ 39 
+ 40         dec delayCountReg
+ 41         brne delay10ms
+ 42 
+ 43         nop
+ 44 
+ 45         ret
+
+

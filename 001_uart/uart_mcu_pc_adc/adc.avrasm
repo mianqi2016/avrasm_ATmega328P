@@ -1,0 +1,150 @@
+/*
+ * adc.asm
+ *
+ *  Created: 3/28/2023 6:23:02 PM
+ *   Author: MQ
+ */ 
+     
+;**************************************************************
+;  subroutine: Read ADC value on ADC0 channel on ATmega328P with ADSC polling
+;  inputs: r21:r20
+;  registers modified: r16
+;**************************************************************
+
+AdcWait: ; Wait until ADSC is cleared
+  
+  lds r16, ADCSRA
+  sbrc r16, ADSC ; Jump over next instruction if ADSC is clear
+  rjmp AdcWait ; ADSC not yet cleared
+  
+  rcall Prompt
+
+  ;ldi r20, 0xFF ; read LSB result
+  ;ldi r21, 0xFF ; read MSB result
+
+  lds r20, ADCL ; read LSB result
+  lds r21, ADCH ; read LSB result
+  ;lds r1, ADCH ; read MSB result
+  rcall BinToChar
+  rcall cr_nl
+
+  lds r16, ADCSRA 
+  ori r16, (1<<ADSC)
+  sts ADCSRA, r16
+
+  ldi ticksCounter, 6
+  rjmp Start
+
+
+Prompt:
+  ldi  ZL, LOW(2*promptStr)    ; load Z pointer with
+  ldi  ZH, HIGH(2*promptStr)    ; promptStr address
+  rcall  puts        ; printing prompt string:"ADC value: "
+  ret
+
+
+;**************************************************************
+;  subroutine: BinToChar - The 16 bit version
+;  comparision, subtracting and conversion to ASCII
+;  If we have a binary with 16 bits length, the following changes:
+;  Comparers and subtractors are now two bytes long.
+;  The digits to be compared with now are 10,000, 1,000, 100 and 10 (between 0 and 65535, five decimal digits).
+;  Comparing and subtracting now have to be in 16 bit mode.
+;**************************************************************
+BinToChar:
+; The binary to be converted is in R1:R0
+  ldi ZH,HIGH(10000) ; Ten thousands
+  ldi ZL,LOW(10000)
+  rcall Count
+  rcall putc  ; Digit 1 output
+  
+  ldi ZH,HIGH(1000) ; Thousends
+  ldi ZL,LOW(1000)
+  rcall Count
+  rcall putc  ; Digit 2 output
+  
+  ldi ZH,HIGH(100) ; Hundreds
+  ldi ZL,LOW(100)
+  rcall Count
+  rcall putc  ; Digit 3 output
+
+  ldi ZL,LOW(10) ; Tens
+  rcall Count
+  rcall putc  ; Digit 4 output
+
+  ldi R16,'0'
+  add R16,R20
+  rcall putc  ; Digit 5 output
+  ; fertig
+; Subroutine
+Count:
+  clr R16 ; R16 is counter
+Count1:
+  sub R20,ZL ; Subtract LSB
+  sbc R21,ZH ; Subtract MSB with carry
+  brcs Count2 ; Overflow during subtract
+  inc R16 ; no overflow
+  rjmp Count1 ; continue subtracting
+Count2:
+  add R20,ZL ; Add LSB to revert last subtract
+  adc R21,ZH ; Add MSB and carry
+  subi R16,-'0' ; Add ASCII-Zero
+  ret ; Return with result in R16
+
+;**************************************************************
+;  subroutine: CR & NL
+;  outputs:  CR - 0x0D, NL - 0x0A
+;  registers modified: r16
+;**************************************************************
+
+cr_nl:
+  ldi r16, 0x0D
+  rcall putc
+  ldi r16, 0x0A
+  rcall putc
+
+  ret
+
+;**************************************************************
+;  subroutine: putc
+;  transmits single ASCII character via UART
+;  inputs: r16 - character to transmit
+;  note: simply requires loading a character into r16 before calling it.
+;  registers modified: r17
+;**************************************************************
+putc:  
+  lds  r17, UCSR0A    ; load UCSR0A into r17
+  sbrs r17, UDRE0    ; wait for empty transmit buffer
+  rjmp putc    ; repeat loop
+
+  ;sts  UDR0, r16    ; transmit character
+  ;ldi r16, 0x0D
+  sts  UDR0, r16    ; transmit character
+
+  ret          ; return from subroutine
+
+;**************************************************************
+;  subroutine: puts
+;  transmits null terminated string via UART
+;  inputs: ZH:ZL - Program Memory address of string to transmit
+;  Note: To use puts subroutine, you must define a null terminated string in Program Memory 
+;  and load its address into the Z pointer.
+;  registers modified: r16,r17,r30,r31
+;**************************************************************
+puts:  
+  lpm  r16, Z+    ; load character from pmem
+  cpi  r16, $00    ; check if null
+  breq  puts_end    ; branch if null
+
+puts_putc_wait:
+  lds  r17, UCSR0A    ; load UCSR0A into r17
+  sbrs  r17, UDRE0    ; wait for empty transmit buffer
+  rjmp  puts_putc_wait    ; repeat loop
+
+  sts  UDR0, r16    ; transmit character
+  rjmp  puts    ; repeat loop
+
+puts_end:
+  ret          ; return from subroutine
+
+

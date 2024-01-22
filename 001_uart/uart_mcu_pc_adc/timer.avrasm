@@ -1,0 +1,14 @@
+/*
+ * timer.asm
+ *
+ *  Created: 3/29/2023 9:13:20 PM
+ *   Author: MQ
+ */ 
+
+
+; ---------- Interrupt-Service-Routines ----------
+timer0_isr_overflow:  ; Timer 0 Overflow ISR
+  in  r1, SREG ; save the content of the flag register
+  dec ticksCounter  ; decrease ticksCounter until 0
+  out  SREG, r1 ; restore the initial value of the flag register
+  reti ; End of ISR, set I bit

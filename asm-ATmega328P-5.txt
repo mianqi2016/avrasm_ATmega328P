@@ -1,0 +1,293 @@
+asm - ATmega328P -5
+2023-02-18
+
+这次要实现的是：ATmega328P 经 UART 与 PC 之间的通信。
+
+重点：
+
+1、为了程序文本编辑方便，将文件分成 4 部分，主程序之外的三部分通过机械替代的方式 “include” 进来。
+
+2、存储分两类，提示性的字符串存在 Flash 中，回显的字符串存在 SRAM 中。
+
+此外，还要注意一个细节：因为代码空间以双字节作为地址单元，所以，提示性的字符串如果字符数是奇数，就会在编译后出现这样的提示：
+
+对此，要么忽略，要么在字符串中加一个空格或其他字符，凑成偶数即可。
+
+以下为测试过的程序：
+
+main.asm:
+
+;
+; testATmega328pUARTasm.asm
+;
+; Created: 2/14/2023 12:40:29 PM
+; Author : MQ
+;
+
+.include "m328pdef.inc"
+
+.set F_CPU = 16000000
+
+.equ numChar = 10    ; number of bytes in array
+
+.dseg
+.org SRAM_START
+charBuffer: .byte numChar    ; allocate bytes in SRAM for array
+
+
+.cseg
+.org 0x00
+rjmp initUART    ;rjmp to initUART subroutine
+
+.include "setup.asm"
+
+Start:
+;**************************************************************
+;To use puts subroutine, you must define a null terminated string in Program Memory 
+;and load its address into the Z pointer.
+;**************************************************************
+  rcall cr_nl
+  ldi  ZL, LOW(2*promptStr)    ; load Z pointer with
+  ldi  ZH, HIGH(2*promptStr)    ; promptStr address
+  rcall  puts        ; printing prompt string:"Please input your string ..."
+
+  ;rcall getc
+  
+  ;ldi r19, numChar
+  ldi XL, LOW(charBuffer)    ; initialize X pointer
+  ldi XH, HIGH(charBuffer)    ; to SRAM array address
+  rcall gets
+
+  ldi  ZL, LOW(2*loopbackStr)    ; load Z pointer with
+  ldi  ZH, HIGH(2*loopbackStr)    ; loopbackStr address
+  rcall  puts        ; printing prompt string:"The string you input was: "
+
+  
+  ldi XL, LOW(charBuffer)    ; initialize X pointer
+  ldi XH, HIGH(charBuffer)    ; to SRAM array address
+  rcall puts_SRAM
+
+  rcall cr_nl
+
+  rjmp Start
+
+.include "put.asm"
+.include "get.asm"
+
+  
+promptStr: .db  "Please input your string ... ", 0x0d, 0x0a,  $00
+loopbackStr: .db  0x0a,"The string you input was:  ", $00
+
+
+put.asm:
+
+/*
+ * UART.asm
+ *
+ *  Created: 2/17/2023 4:47:18 PM
+ *   Author: MQ
+ */ 
+
+ ;**************************************************************
+;*Using this subroutine simply requires loading a character into r16 before calling it.
+;
+;* subroutine: putc
+;*
+;* inputs: r16 - character to transmit
+;*
+;* transmits single ASCII character via UART
+;*
+;* registers modified: r17
+;**************************************************************
+
+putc:  
+  lds  r17, UCSR0A    ; load UCSR0A into r17
+  sbrs r17, UDRE0    ; wait for empty transmit buffer
+  rjmp putc    ; repeat loop
+
+  sts  UDR0, r18    ; transmit character
+
+  ret          ; return from subroutine
+
+
+;**************************************************************
+;* subroutine: puts_SRAM
+;*
+;* inputs: XH:XL - SRAM Memory address of string to transmit
+;*
+;* transmits null terminated string via UART
+;*
+;* registers modified: r17,r18,r26,r27
+;**************************************************************
+
+ldi XL, LOW(charBuffer)    ; initialize X pointer
+ldi XH, HIGH(charBuffer)    ; to SRAM array address
+
+puts_SRAM:
+  ld r18, x+    ; load character from SRAM
+  cpi  r18, 0x0d    ; check if CR
+  breq  puts_SRAM_end    ; branch if null
+puts_SRAM_wait:
+  lds  r17, UCSR0A    ; load UCSR0A into r17
+  sbrs  r17, UDRE0    ; wait for empty transmit buffer
+  rjmp  puts_SRAM_wait    ; repeat loop
+
+  sts  UDR0, r18    ; transmit character
+  rjmp  puts_SRAM    ; repeat loop
+puts_SRAM_end:
+  ld r18, x+
+  sts  UDR0, r18
+  ld r18, x
+  sts  UDR0, r18
+  ret          ; return from subroutine
+
+;**************************************************************
+;* subroutine: puts
+;*
+;* inputs: ZH:ZL - Program Memory address of string to transmit
+;*
+;* transmits null terminated string via UART
+;*
+;* registers modified: r16,r17,r30,r31
+;**************************************************************
+
+puts:  
+  lpm  r16, Z+    ; load character from pmem
+  cpi  r16, $00    ; check if null
+  breq  puts_end    ; branch if null
+
+puts_putc_wait:
+  lds  r17, UCSR0A    ; load UCSR0A into r17
+  sbrs  r17, UDRE0    ; wait for empty transmit buffer
+  rjmp  puts_putc_wait    ; repeat loop
+
+  sts  UDR0, r16    ; transmit character
+  rjmp  puts    ; repeat loop
+
+puts_end:
+  ret          ; return from subroutine
+
+
+get.asm:
+
+/*
+ * get.asm
+ *
+ *  Created: 2/17/2023 4:51:25 PM
+ *   Author: MQ
+ */ 
+
+ ;**************************************************************
+;* subroutine: getc
+;*
+;* inputs: none
+;*
+;* outputs:  r16 - character received
+;*
+;* receives single ASCII character via UART
+;*
+;* registers modified: r16, r17
+;**************************************************************
+
+getc:  
+  lds  r17, UCSR0A    ; load UCSR0A into r17
+  sbrs  r17, RXC0    ; This flag bit is set when there are unread data in the receive buffer 
+              ; and cleared when the receive buffer is empty (i.e., does not contain any unread data).
+  rjmp  getc    ; repeat loop
+  
+  lds  r18, UDR0      ; get received character
+
+  ret          ; return from subroutine
+
+
+;**************************************************************
+;* subroutine: gets
+;*
+;* inputs: XH:XL - SRAM buffer address for rcv'd string
+;*
+;* outputs: none
+;*
+;* receives characters via UART and stores in data memory
+;* until carriage return received
+;*
+;* registers modified: r16, r17, XL, XH
+;**************************************************************
+
+  ldi XL, LOW(charBuffer)    ; initialize X pointer
+  ldi XH, HIGH(charBuffer)    ; to SRAM array address
+
+gets:
+  lds r17, UCSR0A    ; load UCSR0A into r17
+  sbrs  r17, RXC0    ; This flag bit is set when there are unread data in the receive buffer 
+              ; and cleared when the receive buffer is empty (i.e., does not contain any unread data).
+  rjmp  gets    ; repeat loop
+
+  ;rjmp  putc    ; repeat loop
+  
+  lds  r18, UDR0    ; get received character
+
+  cpi  r18, 0x0d    ; check if rcv'd char is CR
+  breq  gets_end    ; branch if CR rcv'd
+
+  st  X+, r18    ; store character to buffer
+  rjmp  gets    ; get another character
+
+gets_end:
+  ldi r18, 0x0d
+  st  X+, r18    ; store character to buffer
+  ldi r18, 0x0a
+  st  X, r18    ; store character to buffer
+  ret    ; return from subroutine
+
+;**************************************************************
+;* subroutine: CR & NL
+;*
+;* outputs:  CR - 0x0D, NL - 0x0A
+;*
+;* registers modified: r19
+;**************************************************************
+cr_nl:
+  ldi r18, 0x0D
+  rcall putc
+  ldi r18, 0x0A
+  rcall putc
+
+  ret
+
+
+setup.asm:
+
+/*
+ * setup.asm
+ *
+ *  Created: 2/17/2023 4:53:25 PM
+ *   Author: MQ
+ */ 
+
+
+;**************************************************************
+;* subroutine: initUART
+;*
+;* inputs: r17:r16 - baud rate prescale
+;*
+;* enables UART transmission with 8 data, parity disabled, 1 stop bit
+;* at input baudrate
+;*
+;* registers modified: r16
+;**************************************************************
+
+ initUART:
+;The desired baud prescale must be loaded into registers 16 and 17 before calling this subroutine. 
+  .equ baud = 9600    ; baudrate
+  .equ bps = (F_CPU/16/baud) - 1    ; baud prescale
+
+  ldi  r16, LOW(bps)    ; load baud prescale
+  ldi  r17, HIGH(bps)    ; into r17:r16
+
+  sts  UBRR0L, r16    ; load baud prescale
+  sts  UBRR0H, r17    ; to UBRR0
+
+  ldi  r16, (1<<RXEN0)|(1<<TXEN0)    ; enable transmitter
+  sts  UCSR0B, r16    ; and receiver
+
+

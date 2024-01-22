@@ -1,0 +1,63 @@
+.dseg
+.org SRAM_START
+;charBuffer: .byte numChar    ; allocate bytes in SRAM for array
+
+.cseg
+
+init:
+;Sleep mode idle and interrupts
+  ldi rTemp, 1<<SE ; Enable sleep mode idle
+  out SMCR, rTemp ; in universal control port
+  sei ; enable global interrupts -- equivalent to "sbi SREG, I"
+
+initExtInterrupt:
+;The external interrupt control register A contains control bits for interrupt sense control.
+;Bit 1, 0 – ISC01, ISC00: Interrupt Sense Control 0 Bit 1 and Bit 0
+;ISC01:00 - The falling edge of INT0 generates an interrupt request.
+  ldi rTemp, (1<<ISC01);
+  sts EICRA, rTemp
+  ldi rTemp, (1<<INT0)
+  out EIMSK, rTemp
+
+;Enable PCINT
+/*  ldi rTemp, 1<<PCIE0 ; Key interrupts
+  sts PCICR, rTemp
+  ldi rTemp, 1<<PCINT0
+  sts PCMSK0, rTemp ; to PCINT mask port*/
+
+ initLED:
+  ;ldi rTemp, (1<<DDB0) ;LED connected to pin1 of PORT B
+  ;out DDRB, rTemp  ;set pin1 of PORT B as OUTPUT
+  ;cbi PORTB, PORTB0 ;default output of pin1 in PORTB is LOW
+
+  sbi DDRB, DDB0
+  sbi PORTB, PORTB0
+
+initPortD:
+  cbi DDRD, DDD2
+  sbi PORTD, PORTD2
+  
+ initTimer0:
+ ;Timer0 run in COM mode - Normal Mode(WGM02:0 = 0). 
+ ;combined with the timer overflow interrupt that automatically clears the TOV0 flag,
+ ;the timer resolution can be increased by software.
+  ldi rTemp, (1<<CS02)|(1<<CS00)  ;0b00000101
+  out TCCR0B, rTemp    ; set the Clock Selector Bits CS00, CS01, CS02 to 101
+                         ; this puts Timer Counter0, TCNT0 in to FCPU/1024 mode
+                         ; so it ticks at the CPU freq/1024=15625ticks/s=125*125
+  ldi rTemp, (1<<TOIE0)   ;0b00000001
+  sts TIMSK0, rTemp    ; set the Timer Overflow Interrupt Enable (TOIE0) bit 
+                         ; of the Timer Interrupt Mask Register (TIMSK0)
+  ldi rTemp, 130    ;255-125=130
+  out TCNT0, rTemp      ; initialize TCNT0 to 130
+
+  ;ldi rTemp, 5
+  ;mov rCycle, rTemp  ; 5 overflow means 40ms
+ initCounter:
+  ldi rCycle, countOverflow
+
+ initFlagRegister:
+  cbr rFlag, bitFlag  ;Performs the logical AND between the contents of register Rd 
+        ;and the complement of the constant mask K.
+  ;rFlag, bitFlag
+  ;clt  ;Clears the T Flag in SREG (Status Register).

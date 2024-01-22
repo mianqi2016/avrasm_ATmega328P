@@ -1,0 +1,17 @@
+.include "define.asm"
+.include "vector.asm"
+
+start:
+.include "init.asm"
+
+; Program loop
+Loop:
+  sleep ; put to sleep
+  nop ; After wakeup by int
+
+  rjmp Loop ; back to sleep
+;
+; End of source code
+;
+
+

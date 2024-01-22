@@ -1,0 +1,51 @@
+;
+; asm_ADC_UART_ATmega328P.asm
+;
+; Created: 3/17/2023 8:37:53 PM
+; Author : MQ
+;
+;**************************************************************
+;  This code read analog voltage on wiper of a variable risistor.
+;  ADC sampling trigged by Timer0 overflow some times for 1 second or manually.
+;  A character was inputed by serial for manually trigging ADC sampling.
+;  ADC value stored in SRAM.
+;  prompt info stored in eeprom.
+;  then, show it on display through serial by UART0 transit.
+;**************************************************************
+
+.nolist
+.include "m328pdef.inc"
+.list
+
+;===== Configuration =====
+.set F_CPU = 16000000
+
+;===== Constants =====
+.equ numChar = 5    ; number of bytes in array: 0-1023'/0'
+
+;===== Registers =====
+.def char_cr_nl = r18
+.def ticksCounter = r19  ; 
+
+
+.dseg
+.org SRAM_START
+charBuffer: .byte numChar    ; allocate bytes in SRAM for array
+
+.cseg
+.include "intvectors.asm"
+
+;main loop
+Start:
+  cpi ticksCounter, $00
+  breq AdcWait
+
+  rjmp Start
+
+.include "adc.asm"
+.include "timer.asm"
+
+  
+promptStr: .db  "ADC value: ", $00
+
+

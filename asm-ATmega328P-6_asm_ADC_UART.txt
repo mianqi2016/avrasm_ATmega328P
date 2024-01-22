@@ -1,0 +1,346 @@
+asm - ATmega328P -6: asm_ADC_UART_ATmega328P
+2023-03-31
+
+这次实验的内容是：用 Timer0 的溢出中断设定 ADC 采样时间，将采样结果经  UART0 发送至串口调试器窗口显示。
+
+整个项目由 4 个文件组成：
+
+1、main.asm
+
+;
+; asm_ADC_UART_ATmega328P.asm
+;
+; Created: 3/17/2023 8:37:53 PM
+; Author : MQ
+;
+;**************************************************************
+;  This code read analog voltage on wiper of a variable risistor.
+;  ADC sampling trigged by Timer0 overflow some times for 1 second or manually.
+;  A character was inputed by serial for manually trigging ADC sampling.
+;  ADC value stored in SRAM.
+;  prompt info stored in eeprom.
+;  then, show it on display through serial by UART0 transit.
+;**************************************************************
+
+.nolist
+.include "m328pdef.inc"
+.list
+
+;===== Configuration =====
+.set F_CPU = 16000000
+
+;===== Constants =====
+.equ numChar = 5    ; number of bytes in array: 0-1023'/0'
+
+;===== Registers =====
+.def char_cr_nl = r18
+.def ticksCounter = r19  ; 
+
+
+.dseg
+.org SRAM_START
+charBuffer: .byte numChar    ; allocate bytes in SRAM for array
+
+.cseg
+.include "intvectors.asm"
+
+;main loop
+Start:
+  cpi ticksCounter, $00
+  breq AdcWait
+
+  rjmp Start
+
+.include "adc.asm"
+.include "timer.asm"
+
+  
+promptStr: .db  "ADC value: ", $00
+
+
+2、intvectors.asm
+
+/*
+ * intvectors.asm
+ *
+ *  Created: 3/28/2023 5:42:02 PM
+ *   Author: MQ
+ */ 
+
+ ; The most typical and general program setup for the reset and interrupt vector addresses 
+ ; in Atmel? ATmega328P is:
+ ; Address  Labels Code    Comments
+ ; 0x0000  jmp RESET    ; Reset Handler
+ ; 0x0002  jmp EXT_INT0  ; IRQ0 Handler
+ ; 0x0004  jmp EXT_INT1  ; IRQ1 Handler
+ ; 0x0006  jmp PCINT0    ; PCINT0 Handler
+ ; 0x0008  jmp PCINT1    ; PCINT1 Handler
+ ; 0x000A  jmp PCINT2    ; PCINT2 Handler
+ ; 0x000C  jmp WDT      ; Watchdog Timer Handler
+ ; 0x000E  jmp TIM2_COMPA  ; Timer2 Compare A Handler
+ ; 0x0010  jmp TIM2_COMPB  ; Timer2 Compare B Handler
+ ; 0x0012  jmp TIM2_OVF  ; Timer2 Overflow Handler
+ ; 0x0014  jmp TIM1_CAPT  ; Timer1 Capture Handler
+ ; 0x0016  jmp TIM1_COMPA  ; Timer1 Compare A Handler
+ ; 0x0018  jmp TIM1_COMPB  ; Timer1 Compare B Handler
+ ; 0x001A  jmp TIM1_OVF  ; Timer1 Overflow Handler
+ ; 0x001C  jmp TIM0_COMPA  ; Timer0 Compare A Handler
+ ; 0x001E  jmp TIM0_COMPB  ; Timer0 Compare B Handler
+ ; 0x0020  jmp TIM0_OVF  ; Timer0 Overflow Handler
+ ; 0x0022  jmp SPI_STC    ; SPI Transfer Complete Handler
+ ; 0x0024  jmp USART_RXC  ; USART, RX Complete Handler
+ ; 0x0026  jmp USART_UDRE  ; USART, UDR Empty Handler
+ ; 0x0028  jmp USART_TXC  ; USART, TX Complete Handler
+ ; 0x002A  jmp ADC      ; ADC Conversion Complete Handler
+ ; 0x002C  jmp EE_RDY    ; EEPROM Ready Handler
+ ; 0x002E  jmp ANA_COMP  ; Analog Comparator Handler
+ ; 0x0030  jmp TWI      ; 2-wire Serial Interface Handler
+ ; 0x0032  jmp SPM_RDY    ; Store Program Memory Ready Handler
+
+
+ .org 0x0000 rjmp RESET    ; Reset Handler
+ .org 0x0002 reti      ; IRQ0 Handler
+ .org 0x0004 reti      ; IRQ1 Handler
+ .org 0x0006 reti      ; PCINT0 Handler
+ .org 0x0008 reti      ; PCINT1 Handler
+ .org 0x000A reti      ; PCINT2 Handler
+ .org 0x000C reti      ; Watchdog Timer Handler
+ .org 0x000E reti      ; Timer2 Compare A Handler
+ .org 0x0010 reti      ; Timer2 Compare B Handler
+ .org 0x0012 reti      ; Timer2 Overflow Handler
+ .org 0x0014 reti      ; Timer1 Capture Handler
+ .org 0x0016 reti      ; Timer1 Compare A Handler
+ .org 0x0018 reti      ; Timer1 Compare B Handler
+ .org 0x001A reti      ; Timer1 Overflow Handler
+ .org 0x001C reti      ; Timer0 Compare A Handler
+ .org 0x001E reti      ; Timer0 Compare B Handler
+ .org 0x0020 rjmp timer0_isr_overflow      ; Timer0 Overflow Handler
+ .org 0x0022 reti      ; SPI Transfer Complete Handler
+ .org 0x0024 reti      ; USART, RX Complete Handler
+ .org 0x0026 reti      ; USART, UDR Empty Handler
+ .org 0x0028 reti      ; USART, TX Complete Handler
+ .org 0x002A reti      ; ADC Conversion Complete Handler
+ .org 0x002C reti      ; EEPROM Ready Handler
+ .org 0x002E reti      ; Analog Comparator Handler
+ .org 0x0030 reti      ; 2-wire Serial Interface Handler
+ .org 0x0032 reti      ; Store Program Memory Ready Handler
+
+RESET:  
+  ldi r16, high(RAMEND); Main program start
+  out SPH, r16 ; Set Stack Pointer to top of RAM
+  ldi r16, low(RAMEND)
+  out SPL, r16
+  sei ; enable global interrupts -- equivalent to "sbi SREG, I"
+
+init:
+
+; initialize ADC on ATmega328P
+; A typical sequence to start an ADC conversion on the ADC0 pin with
+; VCC as reference voltage and polling of ADSC is:
+initADC:
+  ldi R16, (1<<REFS0) ; MUX=ADC0, AVCC with external capacitor at AREF pin
+  sts ADMUX, R16 ; To MUX port register, The STS instruction
+           ;uses the RAMPD Register to access memory above 64K bytes.
+  ldi R16, (1<<ADEN)|(1<<ADSC)|(1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0)
+  sts ADCSRA, R16 ; Write this to control register A
+
+initTimer0:
+  ldi r16, (1<<CS02)|(1<<CS00)  ;0b00000101
+  out TCCR0B, r16     ; set the Clock Selector Bits CS00, CS01, CS02 to 101
+                         ; this puts Timer Counter0, TCNT0 in to FCPU/1024 mode
+                         ; so it ticks at the CPU freq/1024
+  ldi r16, (1<<TOIE0)   ;0b00000001
+  sts TIMSK0, r16     ; set the Timer Overflow Interrupt Enable (TOIE0) bit 
+                         ; of the Timer Interrupt Mask Register (TIMSK0)
+  clr r16
+  out TCNT0, r16      ; initialize the Timer/Counter to 0
+
+  ldi ticksCounter, 6  ; 6 means 100ms
+
+; enables UART transmission with 8 data, parity disabled, 1 stop bit at input baudrate
+initUART0:
+
+    .equ baud = 9600    ; baudrate
+  .equ bps = (F_CPU/16/baud) - 1    ; baud prescale
+;The desired baud prescale must be loaded into registers 16 and 17 
+;before following steps.
+  ldi  r16, LOW(bps)    ; load baud prescale
+  ldi  r17, HIGH(bps)    ; into r17:r16
+
+  sts  UBRR0L, r16    ; load baud prescale
+  sts  UBRR0H, r17    ; to UBRR0
+
+  ldi  r16, (1<<RXEN0)|(1<<TXEN0)    ; enable receiver
+  sts  UCSR0B, r16            ; and transmitter
+
+
+3、adc.asm
+
+/*
+ * adc.asm
+ *
+ *  Created: 3/28/2023 6:23:02 PM
+ *   Author: MQ
+ */ 
+     
+;**************************************************************
+;  subroutine: Read ADC value on ADC0 channel on ATmega328P with ADSC polling
+;  inputs: r21:r20
+;  registers modified: r16
+;**************************************************************
+
+AdcWait: ; Wait until ADSC is cleared
+  
+  lds r16, ADCSRA
+  sbrc r16, ADSC ; Jump over next instruction if ADSC is clear
+  rjmp AdcWait ; ADSC not yet cleared
+  
+  rcall Prompt
+
+  ;ldi r20, 0xFF ; read LSB result
+  ;ldi r21, 0xFF ; read MSB result
+
+  lds r20, ADCL ; read LSB result
+  lds r21, ADCH ; read LSB result
+  ;lds r1, ADCH ; read MSB result
+  rcall BinToChar
+  rcall cr_nl
+
+  lds r16, ADCSRA 
+  ori r16, (1<<ADSC)
+  sts ADCSRA, r16
+
+  ldi ticksCounter, 6
+  rjmp Start
+
+
+Prompt:
+  ldi  ZL, LOW(2*promptStr)    ; load Z pointer with
+  ldi  ZH, HIGH(2*promptStr)    ; promptStr address
+  rcall  puts        ; printing prompt string:"ADC value: "
+  ret
+
+
+;**************************************************************
+;  subroutine: BinToChar - The 16 bit version
+;  comparision, subtracting and conversion to ASCII
+;  If we have a binary with 16 bits length, the following changes:
+;  Comparers and subtractors are now two bytes long.
+;  The digits to be compared with now are 10,000, 1,000, 100 and 10 (between 0 and 65535, five decimal digits).
+;  Comparing and subtracting now have to be in 16 bit mode.
+;**************************************************************
+BinToChar:
+; The binary to be converted is in R1:R0
+  ldi ZH,HIGH(10000) ; Ten thousands
+  ldi ZL,LOW(10000)
+  rcall Count
+  rcall putc  ; Digit 1 output
+  
+  ldi ZH,HIGH(1000) ; Thousends
+  ldi ZL,LOW(1000)
+  rcall Count
+  rcall putc  ; Digit 2 output
+  
+  ldi ZH,HIGH(100) ; Hundreds
+  ldi ZL,LOW(100)
+  rcall Count
+  rcall putc  ; Digit 3 output
+
+  ldi ZL,LOW(10) ; Tens
+  rcall Count
+  rcall putc  ; Digit 4 output
+
+  ldi R16,'0'
+  add R16,R20
+  rcall putc  ; Digit 5 output
+  ; fertig
+; Subroutine
+Count:
+  clr R16 ; R16 is counter
+Count1:
+  sub R20,ZL ; Subtract LSB
+  sbc R21,ZH ; Subtract MSB with carry
+  brcs Count2 ; Overflow during subtract
+  inc R16 ; no overflow
+  rjmp Count1 ; continue subtracting
+Count2:
+  add R20,ZL ; Add LSB to revert last subtract
+  adc R21,ZH ; Add MSB and carry
+  subi R16,-'0' ; Add ASCII-Zero
+  ret ; Return with result in R16
+
+;**************************************************************
+;  subroutine: CR & NL
+;  outputs:  CR - 0x0D, NL - 0x0A
+;  registers modified: r16
+;**************************************************************
+
+cr_nl:
+  ldi r16, 0x0D
+  rcall putc
+  ldi r16, 0x0A
+  rcall putc
+
+  ret
+
+;**************************************************************
+;  subroutine: putc
+;  transmits single ASCII character via UART
+;  inputs: r16 - character to transmit
+;  note: simply requires loading a character into r16 before calling it.
+;  registers modified: r17
+;**************************************************************
+putc:  
+  lds  r17, UCSR0A    ; load UCSR0A into r17
+  sbrs r17, UDRE0    ; wait for empty transmit buffer
+  rjmp putc    ; repeat loop
+
+  ;sts  UDR0, r16    ; transmit character
+  ;ldi r16, 0x0D
+  sts  UDR0, r16    ; transmit character
+
+  ret          ; return from subroutine
+
+;**************************************************************
+;  subroutine: puts
+;  transmits null terminated string via UART
+;  inputs: ZH:ZL - Program Memory address of string to transmit
+;  Note: To use puts subroutine, you must define a null terminated string in Program Memory 
+;  and load its address into the Z pointer.
+;  registers modified: r16,r17,r30,r31
+;**************************************************************
+puts:  
+  lpm  r16, Z+    ; load character from pmem
+  cpi  r16, $00    ; check if null
+  breq  puts_end    ; branch if null
+
+puts_putc_wait:
+  lds  r17, UCSR0A    ; load UCSR0A into r17
+  sbrs  r17, UDRE0    ; wait for empty transmit buffer
+  rjmp  puts_putc_wait    ; repeat loop
+
+  sts  UDR0, r16    ; transmit character
+  rjmp  puts    ; repeat loop
+
+puts_end:
+  ret          ; return from subroutine
+
+
+4、timer.asm
+
+/*
+ * timer.asm
+ *
+ *  Created: 3/29/2023 9:13:20 PM
+ *   Author: MQ
+ */ 
+
+
+; ---------- Interrupt-Service-Routines ----------
+timer0_isr_overflow:  ; Timer 0 Overflow ISR
+  in  r1, SREG ; save the content of the flag register
+  dec ticksCounter  ; decrease ticksCounter until 0
+  out  SREG, r1 ; restore the initial value of the flag register
+  reti ; End of ISR, set I bit
+
+

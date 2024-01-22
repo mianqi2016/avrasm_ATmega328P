@@ -1,0 +1,58 @@
+asm - ATmega328P -1
+2023-02-13
+
+这是 “asm-avr 系列”的第一节，要实现的功能是一个 LED 的 Blinking效果。
+
+程序的制作及运行环境是：
+
+OS：Ubuntu
+
+MCU：ATmega328p
+
+Programmer(hardware)：Arduino UNO
+
+Programmer(software)：avrdude
+
+Assemnler：avra
+
+LED 用的是 Arduino UNO 自带的 LED， 接在 ATmega328p 的 PORTB5 管脚上。
+
+程序功能的实现用的是内外两重循环的方法，内重循环运行 28168 次，外重循环运行 71 次，MCU 的主频是 16M 的情况下，28168 × 71 产生约等于 0.5秒的延时，从而产生 1Hz 左右的 Blinking 效果。
+
+测试过的程序：
+
+  1 .include "m328pdef.inc"
+  2 
+  3 .def ledPinReg = r16
+  4 .def ledPortReg = r17
+  5 .def outerLoopReg = r18
+  6 .def innerLoopRegLow = r24
+  7 .def innerLoopRegHigh = r25
+  8 
+  9 .cseg
+ 10 .org 0x00
+ 11         clr ledPortReg
+ 12         ldi ledPinReg, (1<<PINB5)       ;0x00100000
+ 13         out DDRB, ledPinReg
+ 14 
+ 15 start:
+ 16         eor ledPortReg, ledPinReg
+ 17         out PORTB, ledPortReg
+ 18 
+ 19         ldi outerLoopReg, 71    ;outer loop count, decrease to ZERO
+ 20 
+ 21 outerLoop:
+ 22         ldi innerLoopRegLow, LOW(28168)         ;28168 = 0x6E08
+ 23         ldi innerLoopRegHigh, HIGH(28168)       ;HIGH(28168) = 0x6E
+ 24 
+ 25 innerLoop:
+ 26         sbiw innerLoopRegLow, 1
+ 27         brne innerLoop
+ 28 
+ 29         dec outerLoopReg
+ 30         brne outerLoop
+ 31 
+ 32         rjmp start
+            
+
+

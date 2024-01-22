@@ -1,0 +1,282 @@
+
+asm - ATmega328P -7: INT0 + Timer0 + Debounce
+2023-05-02
+
+
+
+程序的设计思路是这样：
+
+1、按钮开关接在 ATmega328P 的 PORTD2，也就是 Arduino 的 D2，LED 接在 ATmega328P 的 PORTB0，也就是 Arduino 的 D8。
+
+2、启用两个寄存器：一个作为标签寄存器，一个作为计数寄存器。
+
+3、启用三个中断：RESET、INT0 和 Timer0 的 OverFlow。
+
+4、RESET 中断服务子程序中设置栈寄存器位置，给后续的两个 ISR 保存和回复状态寄存器的值用。
+
+5、每次外部中断0（INT0）被触发时，先考察标签位置了没置，如果没置，就置，不管置还是没置，都要将计数寄存器的值恢复为初值（本次实验中为：5）.
+
+6、Timer0 设置为普通模式（基础模式），作 1024 的预分频，TCNT0 在每次溢出中断后恢复为 130（不是默认值 0）。
+
+7、Timer0 的 ISR 中内容最多：先考察标签位置了没置，如果没有置，就返回（不置位，这点跟 INT0 不一样）；如果置了，进一步考察 PIND2（就是 INT0 所在的管脚） 置位没有，如果没有置，就给计数寄存器回复初值，然后返回；如果置了，再考察计数寄存器是否已经减为 0，如果减为 0，作 LED 的状态切换，然后返回；如果没有减到 0，计数寄存器减一，之后返回。
+
+
+程序的实际组成分为 4 部分：
+
+1、define.asm
+
+.nolist
+.include "m328pdef.inc"
+.list
+
+;------ Configuration ------
+.set F_CPU = 16000000
+
+;------ Constants ------
+.equ countOverflow = 5    ; 1s/25=40ms
+
+;------ Registers ------
+;free: R0 .. R14
+;.def rCycle = r14   ;Cycle counter, decrease it to zero
+.def rSreg = r15  ;save and restore SREG register
+.def rTemp = r16  ;Multi purpose register
+.def rTempI = r17  ;Multi purpose register inside interrupts
+.def rCycle = r18   ;Cycle counter for key debouncing, decrease it to zero
+.def rFlag = r19  ;Flag register
+  .equ bitFlag = 0  ;LSB in flag register
+
+
+2、vector.asm
+
+ ; The most typical and general program setup for the reset and interrupt vector addresses 
+ ; in Atmel? ATmega328P is:
+ ; Address  Labels Code    Comments
+ ; 0x0000  jmp RESET    ; Reset Handler
+ ; 0x0002  jmp EXT_INT0  ; IRQ0 Handler
+ ; 0x0004  jmp EXT_INT1  ; IRQ1 Handler
+ ; 0x0006  jmp PCINT0    ; PCINT0 Handler
+ ; 0x0008  jmp PCINT1    ; PCINT1 Handler
+ ; 0x000A  jmp PCINT2    ; PCINT2 Handler
+ ; 0x000C  jmp WDT      ; Watchdog Timer Handler
+ ; 0x000E  jmp TIM2_COMPA  ; Timer2 Compare A Handler
+ ; 0x0010  jmp TIM2_COMPB  ; Timer2 Compare B Handler
+ ; 0x0012  jmp TIM2_OVF  ; Timer2 Overflow Handler
+ ; 0x0014  jmp TIM1_CAPT  ; Timer1 Capture Handler
+ ; 0x0016  jmp TIM1_COMPA  ; Timer1 Compare A Handler
+ ; 0x0018  jmp TIM1_COMPB  ; Timer1 Compare B Handler
+ ; 0x001A  jmp TIM1_OVF  ; Timer1 Overflow Handler
+ ; 0x001C  jmp TIM0_COMPA  ; Timer0 Compare A Handler
+ ; 0x001E  jmp TIM0_COMPB  ; Timer0 Compare B Handler
+ ; 0x0020  jmp TIM0_OVF  ; Timer0 Overflow Handler
+ ; 0x0022  jmp SPI_STC    ; SPI Transfer Complete Handler
+ ; 0x0024  jmp USART_RXC  ; USART, RX Complete Handler
+ ; 0x0026  jmp USART_UDRE  ; USART, UDR Empty Handler
+ ; 0x0028  jmp USART_TXC  ; USART, TX Complete Handler
+ ; 0x002A  jmp ADC      ; ADC Conversion Complete Handler
+ ; 0x002C  jmp EE_RDY    ; EEPROM Ready Handler
+ ; 0x002E  jmp ANA_COMP  ; Analog Comparator Handler
+ ; 0x0030  jmp TWI      ; 2-wire Serial Interface Handler
+ ; 0x0032  jmp SPM_RDY    ; Store Program Memory Ready Handler
+
+ ; ---------- Reset- and interrupt vectors ---
+ .CSEG ; Assemble to the flash storage (Code Segment)
+ .ORG 0 ; Address to zero (Reset- and interrupt vectors start at zero)
+ .org 0x0000 rjmp RESET    ; Reset Handler
+ .org 0x0002 rjmp isr_EXT0_pushbutton      ; IRQ0 Handler
+ .org 0x0004 reti      ; IRQ1 Handler
+ .org 0x0006 reti      ; PCINT0 Handler
+ .org 0x0008 reti      ; PCINT1 Handler
+ .org 0x000A reti      ; PCINT2 Handler
+ .org 0x000C reti      ; Watchdog Timer Handler
+ .org 0x000E reti      ; Timer2 Compare A Handler
+ .org 0x0010 reti      ; Timer2 Compare B Handler
+ .org 0x0012 reti      ; Timer2 Overflow Handler
+ .org 0x0014 reti      ; Timer1 Capture Handler
+ .org 0x0016 reti      ; Timer1 Compare A Handler
+ .org 0x0018 reti      ; Timer1 Compare B Handler
+ .org 0x001A reti      ; Timer1 Overflow Handler
+ .org 0x001C reti      ; Timer0 Compare A Handler
+ .org 0x001E reti      ; Timer0 Compare B Handler
+ .org 0x0020 rjmp isr_Timer0_OverFlow    ; Timer0 Overflow Handler
+ .org 0x0022 reti      ; SPI Transfer Complete Handler
+ .org 0x0024 reti      ; USART, RX Complete Handler
+ .org 0x0026 reti      ; USART, UDR Empty Handler
+ .org 0x0028 reti      ; USART, TX Complete Handler
+ .org 0x002A reti      ; ADC Conversion Complete Handler
+ .org 0x002C reti      ; EEPROM Ready Handler
+ .org 0x002E reti      ; Analog Comparator Handler
+ .org 0x0030 reti      ; 2-wire Serial Interface Handler
+ .org 0x0032 reti      ; Store Program Memory Ready Handler
+
+ ; Interrupt service routines, with number of clock cycles
+ RESET:  
+  ldi r16, high(RAMEND); Main program start
+  out SPH, r16 ; Set Stack Pointer to top of RAM
+  ldi r16, low(RAMEND)
+  out SPL, r16
+  rjmp start
+
+ ; Interrupt service routines, with number of clock cycles
+ isr_EXT0_pushbutton:
+  in rSreg, SREG
+
+  ;brts debounceOn;Tests the T Flag and branches relatively to PC if T is set.
+  ;set  ;Sets the T Flag in SREG (Status Register).
+  sbrs rFlag, bitFlag
+  sbr rFlag, 1<<bitFlag
+
+debounceOn:
+  ;reassigned rCycle to 5
+  ldi rCycle, countOverflow
+
+  out SREG, rSreg
+  reti
+
+
+
+/*Below: ledToggle without debouncing - for test only.
+ ledToggle:
+  in rTempI, PORTB
+  cpi rTempI, 0x01
+  brne onLED
+  cbi PORTB, PORTB0
+  rjmp debounceOn
+
+ onLED:
+  sbi PORTB, PORTB0*/
+
+
+ isr_Timer0_overflow:
+  in rSreg, SREG
+  ;reset TCNTO of Timer0
+  ldi rTempI, 130
+  out TCNT0, rTempI
+  ;'T' in rSreg is cleared, leave with nothing done.
+  ;brtc debounceNone
+  ;If 'T' in rSreg is cleared, read PINB0 bit.
+  sbrs rFlag, bitFlag
+  rjmp debounceNone
+
+  in rTempI, PIND
+  sbrs rTempI, PIND2
+  ;PIB0 is HIGH, means button is released.
+  ;PIB0 is LOW, means button is pressed-down, then reassigned rCycle to 5.
+  rjmp counterReset
+
+  cpi rCycle, 0  ;check wether rCycle has been decreased to ZERO or not.
+  ;If rCycle=0, then toggle LED, this round of debounce ends.
+  breq debounceFinish
+  ;If rCycle!=0, then decrease rCycle once.
+  dec rCycle
+  rjmp debounceNone
+
+debounceFinish:
+  ;clt  ;clear 'T' in rSreg for next debounce.
+  cbr rFlag, 1<<bitFlag
+
+ledToggle:
+  in rTempI, PORTB
+  cpi rTempI, 0x01
+  brne onLED
+  cbi PORTB, PORTB0
+  rjmp debounceNone
+
+onLED:
+  sbi PORTB, PORTB0
+  rjmp debounceNone
+
+counterReset:
+  ldi rCycle, countOverflow
+
+debounceNone:
+  out SREG, rSreg
+  reti
+
+
+3、init.asm
+
+.dseg
+.org SRAM_START
+;charBuffer: .byte numChar    ; allocate bytes in SRAM for array
+
+.cseg
+
+init:
+;Sleep mode idle and interrupts
+  ldi rTemp, 1<<SE ; Enable sleep mode idle
+  out SMCR, rTemp ; in universal control port
+  sei ; enable global interrupts -- equivalent to "sbi SREG, I"
+
+initExtInterrupt:
+;The external interrupt control register A contains control bits for interrupt sense control.
+;Bit 1, 0 – ISC01, ISC00: Interrupt Sense Control 0 Bit 1 and Bit 0
+;ISC01:00 - The falling edge of INT0 generates an interrupt request.
+  ldi rTemp, (1<<ISC01);
+  sts EICRA, rTemp
+  ldi rTemp, (1<<INT0)
+  out EIMSK, rTemp
+
+;Enable PCINT
+/*  ldi rTemp, 1<<PCIE0 ; Key interrupts
+  sts PCICR, rTemp
+  ldi rTemp, 1<<PCINT0
+  sts PCMSK0, rTemp ; to PCINT mask port*/
+
+ initLED:
+  ;ldi rTemp, (1<<DDB0) ;LED connected to pin1 of PORT B
+  ;out DDRB, rTemp  ;set pin1 of PORT B as OUTPUT
+  ;cbi PORTB, PORTB0 ;default output of pin1 in PORTB is LOW
+
+  sbi DDRB, DDB0
+  sbi PORTB, PORTB0
+
+initPortD:
+  cbi DDRD, DDD2
+  sbi PORTD, PORTD2
+  
+ initTimer0:
+ ;Timer0 run in COM mode - Normal Mode(WGM02:0 = 0). 
+ ;combined with the timer overflow interrupt that automatically clears the TOV0 flag,
+ ;the timer resolution can be increased by software.
+  ldi rTemp, (1<<CS02)|(1<<CS00)  ;0b00000101
+  out TCCR0B, rTemp    ; set the Clock Selector Bits CS00, CS01, CS02 to 101
+                         ; this puts Timer Counter0, TCNT0 in to FCPU/1024 mode
+                         ; so it ticks at the CPU freq/1024=15625ticks/s=125*125
+  ldi rTemp, (1<<TOIE0)   ;0b00000001
+  sts TIMSK0, rTemp    ; set the Timer Overflow Interrupt Enable (TOIE0) bit 
+                         ; of the Timer Interrupt Mask Register (TIMSK0)
+  ldi rTemp, 130    ;255-125=130
+  out TCNT0, rTemp      ; initialize TCNT0 to 130
+
+  ;ldi rTemp, 5
+  ;mov rCycle, rTemp  ; 5 overflow means 40ms
+ initCounter:
+  ldi rCycle, countOverflow
+
+ initFlagRegister:
+  cbr rFlag, bitFlag  ;Performs the logical AND between the contents of register Rd 
+        ;and the complement of the constant mask K.
+  ;rFlag, bitFlag
+  ;clt  ;Clears the T Flag in SREG (Status Register).
+
+
+4、main.asm
+
+.include "define.asm"
+.include "vector.asm"
+
+start:
+.include "init.asm"
+
+; Program loop
+Loop:
+  sleep ; put to sleep
+  nop ; After wakeup by int
+
+  rjmp Loop ; back to sleep
+;
+; End of source code
+;
+
+
+

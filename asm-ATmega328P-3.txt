@@ -1,0 +1,54 @@
+asm - ATmega328P -3
+2023-02-13
+
+这一节在前两节的基础上引入了 “Input” 功能，要实现的效果是：当接在 ATmega328p PORTD7 管脚上的 pushbutton 被按下时，接在 PORTB0 管脚上的 LED 亮，否则灭。
+
+要实现这样的功能，需要引入寄存器 “PIND”，将它的值输入到 “PORTB”，由于 pushbutton 接在 7 脚，而 LED 接在 0 脚，因此需要运行两次 “rol”（带进位的左旋），将 7 位的值挪到 0 位。同时，由于 LED 接为正逻辑 —— 管脚-->限流电阻器-->LED正极-->LED负极-->GND，因此，还要运行一次 “com”（One’s Complement - 一次补）指令，将其取反，才能得到想要的效果。
+
+实测的程序：
+
+;
+; testOutputInputLED.asm
+;
+; Created: 2/11/2023 5:49:05 AM
+; Author : MQ
+;
+; MCU: ATmega328p(Arduino UNO)
+; IDE: Microchip Studio 7.0
+; 
+; Work Flow: On/Off a LED via a pushbutton
+; Arduino LED D8(ATmega328p PORTB0) --> 1.5K --> LED --> GND
+; GND --> Pushbutton --> Arduino LED D7(ATmega328p PORTD7)
+;
+
+
+.nolist
+.include "m328Pdef.inc"
+.list
+
+.def    medium = r16
+
+init:
+   ser    medium         
+   out    DDRB, medium
+   ldi    medium, 0b11111110
+   out    PORTB, medium
+
+   clr    medium         
+   out    DDRD, medium          
+   ldi    medium, 0b10000000  ;If PORTxn is written logic one when the pin is configured as an input pin, 
+                ;the pull-up resistor is activated
+   out    PORTD, medium
+
+
+start:
+   in     medium, PIND
+   rol    medium  ;Shifts all bits in Rd one place to the left. The C flag is shifted into bit 0 of Rd. 
+          ;Bit 7 is shifted into the C flag.
+   rol    medium
+   com    medium  ;This instruction performs a One’s Complement of register Rd.
+          ;Rd ← 0xFF-Rd
+   out    PORTB, medium   
+   rjmp   start
+
+

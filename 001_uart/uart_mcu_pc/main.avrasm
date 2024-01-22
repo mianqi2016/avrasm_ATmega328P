@@ -1,0 +1,60 @@
+;
+; testATmega328pUARTasm.asm
+;
+; Created: 2/14/2023 12:40:29 PM
+; Author : MQ
+;
+
+.include "m328pdef.inc"
+
+.set F_CPU = 16000000
+
+.equ numChar = 10    ; number of bytes in array
+
+.dseg
+.org SRAM_START
+charBuffer: .byte numChar    ; allocate bytes in SRAM for array
+
+
+.cseg
+.org 0x00
+rjmp initUART    ;rjmp to initUART subroutine
+
+.include "setup.asm"
+
+Start:
+;**************************************************************
+;To use puts subroutine, you must define a null terminated string in Program Memory 
+;and load its address into the Z pointer.
+;**************************************************************
+  rcall cr_nl
+  ldi  ZL, LOW(2*promptStr)    ; load Z pointer with
+  ldi  ZH, HIGH(2*promptStr)    ; promptStr address
+  rcall  puts        ; printing prompt string:"Please input your string ..."
+
+  ;rcall getc
+  
+  ;ldi r19, numChar
+  ldi XL, LOW(charBuffer)    ; initialize X pointer
+  ldi XH, HIGH(charBuffer)    ; to SRAM array address
+  rcall gets
+
+  ldi  ZL, LOW(2*loopbackStr)    ; load Z pointer with
+  ldi  ZH, HIGH(2*loopbackStr)    ; loopbackStr address
+  rcall  puts        ; printing prompt string:"The string you input was: "
+
+  
+  ldi XL, LOW(charBuffer)    ; initialize X pointer
+  ldi XH, HIGH(charBuffer)    ; to SRAM array address
+  rcall puts_SRAM
+
+  rcall cr_nl
+
+  rjmp Start
+
+.include "put.asm"
+.include "get.asm"
+
+  
+promptStr: .db  "Please input your string ... ", 0x0d, 0x0a,  $00
+loopbackStr: .db  0x0a,"The string you input was:  ", $00

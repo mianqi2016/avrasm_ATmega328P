@@ -1,0 +1,83 @@
+/*
+ * get.asm
+ *
+ *  Created: 2/17/2023 4:51:25 PM
+ *   Author: MQ
+ */ 
+
+ ;**************************************************************
+;* subroutine: getc
+;*
+;* inputs: none
+;*
+;* outputs:  r16 - character received
+;*
+;* receives single ASCII character via UART
+;*
+;* registers modified: r16, r17
+;**************************************************************
+
+getc:  
+  lds  r17, UCSR0A    ; load UCSR0A into r17
+  sbrs  r17, RXC0    ; This flag bit is set when there are unread data in the receive buffer 
+              ; and cleared when the receive buffer is empty (i.e., does not contain any unread data).
+  rjmp  getc    ; repeat loop
+  
+  lds  r18, UDR0      ; get received character
+
+  ret          ; return from subroutine
+
+
+;**************************************************************
+;* subroutine: gets
+;*
+;* inputs: XH:XL - SRAM buffer address for rcv'd string
+;*
+;* outputs: none
+;*
+;* receives characters via UART and stores in data memory
+;* until carriage return received
+;*
+;* registers modified: r16, r17, XL, XH
+;**************************************************************
+
+  ldi XL, LOW(charBuffer)    ; initialize X pointer
+  ldi XH, HIGH(charBuffer)    ; to SRAM array address
+
+gets:
+  lds r17, UCSR0A    ; load UCSR0A into r17
+  sbrs  r17, RXC0    ; This flag bit is set when there are unread data in the receive buffer 
+              ; and cleared when the receive buffer is empty (i.e., does not contain any unread data).
+  rjmp  gets    ; repeat loop
+
+  ;rjmp  putc    ; repeat loop
+  
+  lds  r18, UDR0    ; get received character
+
+  cpi  r18, 0x0d    ; check if rcv'd char is CR
+  breq  gets_end    ; branch if CR rcv'd
+
+  st  X+, r18    ; store character to buffer
+  rjmp  gets    ; get another character
+
+gets_end:
+  ldi r18, 0x0d
+  st  X+, r18    ; store character to buffer
+  ldi r18, 0x0a
+  st  X, r18    ; store character to buffer
+  ret    ; return from subroutine
+
+;**************************************************************
+;* subroutine: CR & NL
+;*
+;* outputs:  CR - 0x0D, NL - 0x0A
+;*
+;* registers modified: r19
+;**************************************************************
+cr_nl:
+  ldi r18, 0x0D
+  rcall putc
+  ldi r18, 0x0A
+  rcall putc
+
+  ret

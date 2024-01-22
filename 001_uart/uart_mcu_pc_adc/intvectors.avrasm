@@ -1,0 +1,114 @@
+/*
+ * intvectors.asm
+ *
+ *  Created: 3/28/2023 5:42:02 PM
+ *   Author: MQ
+ */ 
+
+ ; The most typical and general program setup for the reset and interrupt vector addresses 
+ ; in Atmel? ATmega328P is:
+ ; Address  Labels Code    Comments
+ ; 0x0000  jmp RESET    ; Reset Handler
+ ; 0x0002  jmp EXT_INT0  ; IRQ0 Handler
+ ; 0x0004  jmp EXT_INT1  ; IRQ1 Handler
+ ; 0x0006  jmp PCINT0    ; PCINT0 Handler
+ ; 0x0008  jmp PCINT1    ; PCINT1 Handler
+ ; 0x000A  jmp PCINT2    ; PCINT2 Handler
+ ; 0x000C  jmp WDT      ; Watchdog Timer Handler
+ ; 0x000E  jmp TIM2_COMPA  ; Timer2 Compare A Handler
+ ; 0x0010  jmp TIM2_COMPB  ; Timer2 Compare B Handler
+ ; 0x0012  jmp TIM2_OVF  ; Timer2 Overflow Handler
+ ; 0x0014  jmp TIM1_CAPT  ; Timer1 Capture Handler
+ ; 0x0016  jmp TIM1_COMPA  ; Timer1 Compare A Handler
+ ; 0x0018  jmp TIM1_COMPB  ; Timer1 Compare B Handler
+ ; 0x001A  jmp TIM1_OVF  ; Timer1 Overflow Handler
+ ; 0x001C  jmp TIM0_COMPA  ; Timer0 Compare A Handler
+ ; 0x001E  jmp TIM0_COMPB  ; Timer0 Compare B Handler
+ ; 0x0020  jmp TIM0_OVF  ; Timer0 Overflow Handler
+ ; 0x0022  jmp SPI_STC    ; SPI Transfer Complete Handler
+ ; 0x0024  jmp USART_RXC  ; USART, RX Complete Handler
+ ; 0x0026  jmp USART_UDRE  ; USART, UDR Empty Handler
+ ; 0x0028  jmp USART_TXC  ; USART, TX Complete Handler
+ ; 0x002A  jmp ADC      ; ADC Conversion Complete Handler
+ ; 0x002C  jmp EE_RDY    ; EEPROM Ready Handler
+ ; 0x002E  jmp ANA_COMP  ; Analog Comparator Handler
+ ; 0x0030  jmp TWI      ; 2-wire Serial Interface Handler
+ ; 0x0032  jmp SPM_RDY    ; Store Program Memory Ready Handler
+
+
+ .org 0x0000 rjmp RESET    ; Reset Handler
+ .org 0x0002 reti      ; IRQ0 Handler
+ .org 0x0004 reti      ; IRQ1 Handler
+ .org 0x0006 reti      ; PCINT0 Handler
+ .org 0x0008 reti      ; PCINT1 Handler
+ .org 0x000A reti      ; PCINT2 Handler
+ .org 0x000C reti      ; Watchdog Timer Handler
+ .org 0x000E reti      ; Timer2 Compare A Handler
+ .org 0x0010 reti      ; Timer2 Compare B Handler
+ .org 0x0012 reti      ; Timer2 Overflow Handler
+ .org 0x0014 reti      ; Timer1 Capture Handler
+ .org 0x0016 reti      ; Timer1 Compare A Handler
+ .org 0x0018 reti      ; Timer1 Compare B Handler
+ .org 0x001A reti      ; Timer1 Overflow Handler
+ .org 0x001C reti      ; Timer0 Compare A Handler
+ .org 0x001E reti      ; Timer0 Compare B Handler
+ .org 0x0020 rjmp timer0_isr_overflow      ; Timer0 Overflow Handler
+ .org 0x0022 reti      ; SPI Transfer Complete Handler
+ .org 0x0024 reti      ; USART, RX Complete Handler
+ .org 0x0026 reti      ; USART, UDR Empty Handler
+ .org 0x0028 reti      ; USART, TX Complete Handler
+ .org 0x002A reti      ; ADC Conversion Complete Handler
+ .org 0x002C reti      ; EEPROM Ready Handler
+ .org 0x002E reti      ; Analog Comparator Handler
+ .org 0x0030 reti      ; 2-wire Serial Interface Handler
+ .org 0x0032 reti      ; Store Program Memory Ready Handler
+
+RESET:  
+  ldi r16, high(RAMEND); Main program start
+  out SPH, r16 ; Set Stack Pointer to top of RAM
+  ldi r16, low(RAMEND)
+  out SPL, r16
+  sei ; enable global interrupts -- equivalent to "sbi SREG, I"
+
+init:
+
+; initialize ADC on ATmega328P
+; A typical sequence to start an ADC conversion on the ADC0 pin with
+; VCC as reference voltage and polling of ADSC is:
+initADC:
+  ldi R16, (1<<REFS0) ; MUX=ADC0, AVCC with external capacitor at AREF pin
+  sts ADMUX, R16 ; To MUX port register, The STS instruction
+           ;uses the RAMPD Register to access memory above 64K bytes.
+  ldi R16, (1<<ADEN)|(1<<ADSC)|(1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0)
+  sts ADCSRA, R16 ; Write this to control register A
+
+initTimer0:
+  ldi r16, (1<<CS02)|(1<<CS00)  ;0b00000101
+  out TCCR0B, r16     ; set the Clock Selector Bits CS00, CS01, CS02 to 101
+                         ; this puts Timer Counter0, TCNT0 in to FCPU/1024 mode
+                         ; so it ticks at the CPU freq/1024
+  ldi r16, (1<<TOIE0)   ;0b00000001
+  sts TIMSK0, r16     ; set the Timer Overflow Interrupt Enable (TOIE0) bit 
+                         ; of the Timer Interrupt Mask Register (TIMSK0)
+  clr r16
+  out TCNT0, r16      ; initialize the Timer/Counter to 0
+
+  ldi ticksCounter, 6  ; 6 means 100ms
+
+; enables UART transmission with 8 data, parity disabled, 1 stop bit at input baudrate
+initUART0:
+
+    .equ baud = 9600    ; baudrate
+  .equ bps = (F_CPU/16/baud) - 1    ; baud prescale
+;The desired baud prescale must be loaded into registers 16 and 17 
+;before following steps.
+  ldi  r16, LOW(bps)    ; load baud prescale
+  ldi  r17, HIGH(bps)    ; into r17:r16
+
+  sts  UBRR0L, r16    ; load baud prescale
+  sts  UBRR0H, r17    ; to UBRR0
+
+  ldi  r16, (1<<RXEN0)|(1<<TXEN0)    ; enable receiver
+  sts  UCSR0B, r16            ; and transmitter
+
+

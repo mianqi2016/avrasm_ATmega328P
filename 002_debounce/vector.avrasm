@@ -1,0 +1,143 @@
+ ; The most typical and general program setup for the reset and interrupt vector addresses 
+ ; in Atmel? ATmega328P is:
+ ; Address  Labels Code    Comments
+ ; 0x0000  jmp RESET    ; Reset Handler
+ ; 0x0002  jmp EXT_INT0  ; IRQ0 Handler
+ ; 0x0004  jmp EXT_INT1  ; IRQ1 Handler
+ ; 0x0006  jmp PCINT0    ; PCINT0 Handler
+ ; 0x0008  jmp PCINT1    ; PCINT1 Handler
+ ; 0x000A  jmp PCINT2    ; PCINT2 Handler
+ ; 0x000C  jmp WDT      ; Watchdog Timer Handler
+ ; 0x000E  jmp TIM2_COMPA  ; Timer2 Compare A Handler
+ ; 0x0010  jmp TIM2_COMPB  ; Timer2 Compare B Handler
+ ; 0x0012  jmp TIM2_OVF  ; Timer2 Overflow Handler
+ ; 0x0014  jmp TIM1_CAPT  ; Timer1 Capture Handler
+ ; 0x0016  jmp TIM1_COMPA  ; Timer1 Compare A Handler
+ ; 0x0018  jmp TIM1_COMPB  ; Timer1 Compare B Handler
+ ; 0x001A  jmp TIM1_OVF  ; Timer1 Overflow Handler
+ ; 0x001C  jmp TIM0_COMPA  ; Timer0 Compare A Handler
+ ; 0x001E  jmp TIM0_COMPB  ; Timer0 Compare B Handler
+ ; 0x0020  jmp TIM0_OVF  ; Timer0 Overflow Handler
+ ; 0x0022  jmp SPI_STC    ; SPI Transfer Complete Handler
+ ; 0x0024  jmp USART_RXC  ; USART, RX Complete Handler
+ ; 0x0026  jmp USART_UDRE  ; USART, UDR Empty Handler
+ ; 0x0028  jmp USART_TXC  ; USART, TX Complete Handler
+ ; 0x002A  jmp ADC      ; ADC Conversion Complete Handler
+ ; 0x002C  jmp EE_RDY    ; EEPROM Ready Handler
+ ; 0x002E  jmp ANA_COMP  ; Analog Comparator Handler
+ ; 0x0030  jmp TWI      ; 2-wire Serial Interface Handler
+ ; 0x0032  jmp SPM_RDY    ; Store Program Memory Ready Handler
+
+ ; ---------- Reset- and interrupt vectors ---
+ .CSEG ; Assemble to the flash storage (Code Segment)
+ .ORG 0 ; Address to zero (Reset- and interrupt vectors start at zero)
+ .org 0x0000 rjmp RESET    ; Reset Handler
+ .org 0x0002 rjmp isr_EXT0_pushbutton      ; IRQ0 Handler
+ .org 0x0004 reti      ; IRQ1 Handler
+ .org 0x0006 reti      ; PCINT0 Handler
+ .org 0x0008 reti      ; PCINT1 Handler
+ .org 0x000A reti      ; PCINT2 Handler
+ .org 0x000C reti      ; Watchdog Timer Handler
+ .org 0x000E reti      ; Timer2 Compare A Handler
+ .org 0x0010 reti      ; Timer2 Compare B Handler
+ .org 0x0012 reti      ; Timer2 Overflow Handler
+ .org 0x0014 reti      ; Timer1 Capture Handler
+ .org 0x0016 reti      ; Timer1 Compare A Handler
+ .org 0x0018 reti      ; Timer1 Compare B Handler
+ .org 0x001A reti      ; Timer1 Overflow Handler
+ .org 0x001C reti      ; Timer0 Compare A Handler
+ .org 0x001E reti      ; Timer0 Compare B Handler
+ .org 0x0020 rjmp isr_Timer0_OverFlow    ; Timer0 Overflow Handler
+ .org 0x0022 reti      ; SPI Transfer Complete Handler
+ .org 0x0024 reti      ; USART, RX Complete Handler
+ .org 0x0026 reti      ; USART, UDR Empty Handler
+ .org 0x0028 reti      ; USART, TX Complete Handler
+ .org 0x002A reti      ; ADC Conversion Complete Handler
+ .org 0x002C reti      ; EEPROM Ready Handler
+ .org 0x002E reti      ; Analog Comparator Handler
+ .org 0x0030 reti      ; 2-wire Serial Interface Handler
+ .org 0x0032 reti      ; Store Program Memory Ready Handler
+
+ ; Interrupt service routines, with number of clock cycles
+ RESET:  
+  ldi r16, high(RAMEND); Main program start
+  out SPH, r16 ; Set Stack Pointer to top of RAM
+  ldi r16, low(RAMEND)
+  out SPL, r16
+  rjmp start
+
+ ; Interrupt service routines, with number of clock cycles
+ isr_EXT0_pushbutton:
+  in rSreg, SREG
+
+  ;brts debounceOn;Tests the T Flag and branches relatively to PC if T is set.
+  ;set  ;Sets the T Flag in SREG (Status Register).
+  sbrs rFlag, bitFlag
+  sbr rFlag, 1<<bitFlag
+
+debounceOn:
+  ;reassigned rCycle to 5
+  ldi rCycle, countOverflow
+
+  out SREG, rSreg
+  reti
+
+
+
+/*Below: ledToggle without debouncing - for test only.
+ ledToggle:
+  in rTempI, PORTB
+  cpi rTempI, 0x01
+  brne onLED
+  cbi PORTB, PORTB0
+  rjmp debounceOn
+
+ onLED:
+  sbi PORTB, PORTB0*/
+
+
+ isr_Timer0_overflow:
+  in rSreg, SREG
+  ;reset TCNTO of Timer0
+  ldi rTempI, 130
+  out TCNT0, rTempI
+  ;'T' in rSreg is cleared, leave with nothing done.
+  ;brtc debounceNone
+  ;If 'T' in rSreg is cleared, read PINB0 bit.
+  sbrs rFlag, bitFlag
+  rjmp debounceNone
+
+  in rTempI, PIND
+  sbrs rTempI, PIND2
+  ;PIB0 is HIGH, means button is released.
+  ;PIB0 is LOW, means button is pressed-down, then reassigned rCycle to 5.
+  rjmp counterReset
+
+  cpi rCycle, 0  ;check wether rCycle has been decreased to ZERO or not.
+  ;If rCycle=0, then toggle LED, this round of debounce ends.
+  breq debounceFinish
+  ;If rCycle!=0, then decrease rCycle once.
+  dec rCycle
+  rjmp debounceNone
+
+debounceFinish:
+  ;clt  ;clear 'T' in rSreg for next debounce.
+  cbr rFlag, 1<<bitFlag
+
+ledToggle:
+  in rTempI, PORTB
+  cpi rTempI, 0x01
+  brne onLED
+  cbi PORTB, PORTB0
+  rjmp debounceNone
+
+onLED:
+  sbi PORTB, PORTB0
+  rjmp debounceNone
+
+counterReset:
+  ldi rCycle, countOverflow
+
+debounceNone:
+  out SREG, rSreg
+  reti
